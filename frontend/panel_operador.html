@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VíasBolivia · Panel del operador</title>
+<style>
+  :root{--bg:#f4f6f9;--card:#fff;--tx:#1b2430;--mut:#667085;--br:#d9dee7;--pri:#1f5fbf;--ok:#1a7f4b;--warn:#b54708;--bad:#b42318;}
+  @media (prefers-color-scheme:dark){:root{--bg:#10151c;--card:#19212b;--tx:#e8edf3;--mut:#9aa6b6;--br:#2a3544;--pri:#6aa3ff;--ok:#4cc38a;--warn:#f0a35e;--bad:#ff7b72;}}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx)}
+  header{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;background:var(--pri);color:#fff}
+  header h1{font-size:1.15rem;margin:0}
+  header span{font-size:.85rem;opacity:.9}
+  main{max-width:1100px;margin:0 auto;padding:20px;display:grid;gap:18px}
+  .card{background:var(--card);border:1px solid var(--br);border-radius:10px;padding:16px}
+  .card h2{margin:0 0 12px;font-size:1rem}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .kpi b{display:block;font-size:1.6rem}
+  .kpi small{color:var(--mut)}
+  .lanes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .lane{border:1px solid var(--br);border-radius:8px;padding:12px;text-align:center}
+  .lane.off{opacity:.6}
+  .lane small{color:var(--mut);display:block;margin-bottom:6px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--ok)}
+  .off .dot{background:var(--bad)}
+  button{font:inherit;cursor:pointer;border:1px solid var(--br);background:var(--card);color:var(--tx);border-radius:6px;padding:6px 12px}
+  button.pri{background:var(--pri);color:#fff;border-color:var(--pri)}
+  button:hover{filter:brightness(.95)}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .bar label{margin-left:auto;color:var(--mut);font-size:.9rem}
+  .tw{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:.92rem}
+  th,td{text-align:left;padding:8px;border-bottom:1px solid var(--br);white-space:nowrap}
+  th{color:var(--mut);font-weight:600}
+  .tag{padding:2px 8px;border-radius:99px;font-size:.78rem;border:1px solid currentColor}
+  .automatico{color:var(--ok)}.corregido{color:var(--pri)}.observado{color:var(--warn)}
+  .low{color:var(--bad);font-weight:600}
+  td input{width:110px;padding:4px;font:inherit;text-transform:uppercase}
+  #msg{min-height:1.2em;color:var(--mut);font-size:.9rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>VíasBolivia · Peaje automático El Alto – La Paz</h1>
+  <span>Rol: operador · usuario: op1</span>
+</header>
+<main>
+  <section class="kpis" aria-label="Resumen">
+    <div class="card kpi"><b id="kPasos">0</b><small>Pasos registrados</small></div>
+    <div class="card kpi"><b id="kRec">Bs 0.00</b><small>Recaudado</small></div>
+    <div class="card kpi"><b id="kRev">0</b><small>Lecturas por revisar</small></div>
+    <div class="card kpi"><b id="kLan">6/6</b><small>Carriles habilitados</small></div>
+  </section>
+
+  <section class="card">
+    <h2>Estado de carriles</h2>
+    <div class="lanes" id="lanes"></div>
+  </section>
+
+  <section class="card">
+    <h2>Registro de pasos vehiculares</h2>
+    <div class="bar">
+      <button class="pri" id="btnCap">Simular captura OCR</button>
+      <button id="btnClr">Vaciar registros</button>
+      <label><input type="checkbox" id="soloRev"> Mostrar solo lecturas por revisar (confianza &lt; 80)</label>
+    </div>
+    <div id="msg" role="status"></div>
+    <div class="tw">
+      <table>
+        <thead><tr><th>#</th><th>Fecha y hora</th><th>Placa</th><th>Carril</th><th>Categoría</th><th>Tarifa (Bs)</th><th>Confianza</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+// Datos simulados con la misma estructura de la base de datos (tablas carril, tarifa, paso_vehicular)
+const carriles = [
+  {id:1,numero:1,sentido:'BAJADA',estado:'habilitado'},{id:2,numero:2,sentido:'BAJADA',estado:'habilitado'},
+  {id:3,numero:3,sentido:'BAJADA',estado:'habilitado'},{id:4,numero:1,sentido:'SUBIDA',estado:'habilitado'},
+  {id:5,numero:2,sentido:'SUBIDA',estado:'habilitado'},{id:6,numero:3,sentido:'SUBIDA',estado:'habilitado'}
+];
+const tarifas = {liviano:2.00, pesado:5.00};
+let pasos = [], seq = 0, editando = null;
+const UMBRAL = 80;
+const $ = id => document.getElementById(id);
+const fmt = d => d.toLocaleString('es-BO',{hour12:false});
+
+function placaAleatoria(){
+  const L='ABCDEFGHJKLMNPQRSTUVWXYZ', n=Math.floor(1000+Math.random()*9000);
+  return n+Array.from({length:3},()=>L[Math.floor(Math.random()*L.length)]).join('');
+}
+function mostrar(t){ $('msg').textContent = t; }
+
+function renderCarriles(){
+  $('lanes').innerHTML = carriles.map(c=>`
+    <div class="lane ${c.estado==='habilitado'?'':'off'}">
+      <small>${c.sentido==='BAJADA'?'Bajada (El Alto → La Paz)':'Subida (La Paz → El Alto)'}</small>
+      <strong>Carril ${c.numero}</strong><br>
+      <span><i class="dot"></i>${c.estado}</span><br><br>
+      <button data-lane="${c.id}">${c.estado==='habilitado'?'Deshabilitar':'Habilitar'}</button>
+    </div>`).join('');
+  $('lanes').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    const c = carriles.find(x=>x.id==b.dataset.lane);
+    c.estado = c.estado==='habilitado'?'deshabilitado':'habilitado';
+    mostrar(`Carril ${c.numero} (${c.sentido.toLowerCase()}) ${c.estado}.`);
+    render();
+  });
+}
+
+function renderTabla(){
+  const solo = $('soloRev').checked;
+  const filas = pasos.filter(p=>!solo || (p.confianza<UMBRAL && p.estado!=='corregido'));
+  $('tbody').innerHTML = filas.length ? filas.slice().reverse().map(p=>{
+    const c = carriles.find(x=>x.id===p.carril);
+    const baja = p.confianza<UMBRAL;
+    const celdaPlaca = editando===p.id
+      ? `<input id="inpPlaca" value="${p.placa}" maxlength="7">`
+      : p.placa;
+    const accion = editando===p.id
+      ? `<button class="pri" data-ok="${p.id}">Guardar</button>`
+      : (baja && p.estado!=='corregido' ? `<button data-fix="${p.id}">Corregir</button>` : '');
+    return `<tr><td>${p.id}</td><td>${fmt(p.fecha)}</td><td>${celdaPlaca}</td>
+      <td>${c.sentido.toLowerCase()} · ${c.numero}</td><td>${p.categoria}</td><td>${p.monto.toFixed(2)}</td>
+      <td class="${baja?'low':''}">${p.confianza.toFixed(1)}%</td>
+      <td><span class="tag ${p.estado}">${p.estado}</span></td><td>${accion}</td></tr>`;
+  }).join('') : '<tr><td colspan="9">Sin registros para mostrar.</td></tr>';
+  document.querySelectorAll('[data-fix]').forEach(b=>b.onclick=()=>{editando=+b.dataset.fix;renderTabla();$('inpPlaca').focus();});
+  document.querySelectorAll('[data-ok]').forEach(b=>b.onclick=()=>{
+    const v = $('inpPlaca').value.trim().toUpperCase();
+    if(!/^\d{4}[A-Z]{3}$/.test(v)){ mostrar('Formato de placa inválido: use 4 dígitos y 3 letras (ej. 2845KLM).'); return; }
+    const p = pasos.find(x=>x.id===+b.dataset.ok);
+    p.placa = v; p.estado = 'corregido'; editando = null;
+    mostrar(`Lectura #${p.id} corregida por el operador.`);
+    render();
+  });
+}
+
+function renderKpis(){
+  $('kPasos').textContent = pasos.length;
+  $('kRec').textContent = 'Bs ' + pasos.reduce((s,p)=>s+p.monto,0).toFixed(2);
+  $('kRev').textContent = pasos.filter(p=>p.confianza<UMBRAL && p.estado!=='corregido').length;
+  $('kLan').textContent = carriles.filter(c=>c.estado==='habilitado').length + '/6';
+}
+function render(){ renderCarriles(); renderTabla(); renderKpis(); }
+
+$('btnCap').onclick = ()=>{
+  const activos = carriles.filter(c=>c.estado==='habilitado');
+  if(!activos.length){ mostrar('No hay carriles habilitados para registrar pasos.'); return; }
+  const c = activos[Math.floor(Math.random()*activos.length)];
+  const categoria = Math.random()<0.8 ? 'liviano' : 'pesado';
+  const confianza = 55 + Math.random()*44;
+  const p = {id:++seq, fecha:new Date(), placa:placaAleatoria(), carril:c.id, categoria,
+             monto:tarifas[categoria], confianza, estado: confianza<UMBRAL ? 'observado' : 'automatico'};
+  pasos.push(p);
+  mostrar(`Paso #${p.id} registrado en carril ${c.numero} (${c.sentido.toLowerCase()}).` + (p.estado==='observado'?' Lectura con baja confianza: requiere revisión.':''));
+  render();
+};
+$('btnClr').onclick = ()=>{ pasos=[]; seq=0; editando=null; mostrar('Registros vaciados (solo simulación).'); render(); };
+$('soloRev').onchange = renderTabla;
+render();
+</script>
+</body>
+</html>
