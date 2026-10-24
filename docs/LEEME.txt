@@ -1,3 +1,0 @@
-Coloca aqui los PDF finales:
-- Modelo relacional (Tarea 3)
-- Informe de la Tarea 4 (instrumento, validacion y pantalla)
